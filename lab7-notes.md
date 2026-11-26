@@ -10,7 +10,13 @@ two original tables are preserved; a `users` table is added and linked to `stude
 ## Part 1: Generate the Lab 7 Application
 
 ### AI prompt used
-> From the attached documents, generate codes for all uses cases UM1 TO UM10 and the complete workflow for this project
+> Generate code for all user management use cases UM-01 through UM-10 in the User Management Design Document.
+
+Use the Application Builder, Test Harness Generator, and Traceability Auditor documents as implementation guidance. Follow the authentication, authorization, session management, password hashing, CSRF protection, and role based access practices in the Authentication Reading Handout.
+
+Use lab6.zip as the existing Peer Tutoring Hub application to extend. Preserve the Lab 6 three tier architecture and update the application as needed to support user registration, login, logout, profile management, administrator access, and protected tutoring request workflows.
+
+Return a complete Lab 7 application package with all updated and new files.
 
 AI tool: Claude (Anthropic)
 
@@ -104,14 +110,14 @@ To start over: `rm tutoring.db` and run both scripts again.
 
 ### Part 3: Administrator account
 ```bash
-php create-admin.php "Test Administrator" admin@example.com "TestPassword123"
+php create-admin.php "Test Administrator"snsimba@outlook.com" "123456789101112"
 ```
 Expected:
 ```
 Administrator account created.
   user_id: 1
   name:    Test Administrator
-  email:   admin@example.com
+  email:   snsimba@outlook.com
   role:    Administrator
   status:  Active
 ```
@@ -183,6 +189,89 @@ php tests/integration-tests.php
 ```
 All three use an in-memory SQLite database built from both SQL scripts and never touch `tutoring.db`.
 Each prints `PASS:`/`FAIL:` lines, a results summary, and exits non-zero on any failure.
+
+### Part 9: Use the AI Skills Pack Process
+
+**AI tool used:** ChatGPT (OpenAI). The responses below are based on the architecture and code traceability documented in these Lab 7 notes. The PHP source and automated test implementations were not supplied for this review; direct code verification and test execution remain to be completed in Codespaces.
+
+#### 9.1 Application Builder
+
+**Prompt:**
+> Explain how a student registration request moves from register.php through authentication checks, PHP services, repositories, PDO, and SQLite in the Peer Tutoring Hub application. Identify the responsibility of each file or layer.
+
+**AI response:**
+
+1. **Presentation — `php/register.php`:** displays the registration form and includes a CSRF token. The student enters their name, email, password, password confirmation and permitted role.
+2. **Controller — `php/process-register.php`:** receives the POST submission, checks the CSRF token using `includes/auth.php`, and passes registration data to the service. Registration is public and does not require an existing authenticated session.
+3. **Authentication support — `includes/auth.php`:** provides CSRF generation and verification and session management. Public registration must not grant Administrator privileges.
+4. **Business logic — `services/userService.php`:** `registerUser()` applies the rules in `includes/validation.php`, checks email uniqueness and permitted roles, and hashes the password using `password_hash($password, PASSWORD_DEFAULT)`. The account and associated student profile are handled within the service's transaction logic.
+5. **Data access — `repositories/userPDO.php` and `repositories/studentPDO.php`:** `insertUser()` creates the account; `insertStudentForUser()` creates the student profile or `linkStudentToUser()` links an existing student record. Repositories use PDO prepared statements rather than constructing SQL from raw input.
+6. **Database connection — `config/db.php`:** provides the PDO connection to SQLite and enables foreign key enforcement.
+7. **Persistence — `database/tutoring.db`:** stores the account in `users` and the student profile in `students`, linked through `students.user_id`. The password hash, not the plaintext password, is stored.
+
+**Evaluation and code verification:**
+
+The statement selected for verification is that `registerUser()` hashes the password before it is stored. This agrees with Part 7 of these notes and the security checklist. To verify against the actual code, run the following from the application root:
+
+```bash
+grep -nE 'function registerUser|password_hash|insertUser' services/userService.php
+grep -nE 'function insertUser|INSERT INTO|prepare' repositories/userPDO.php
+```
+
+Inspect the surrounding function bodies to confirm that the hash is passed to the repository and stored instead of the original password. **Verification status:** consistent with the supplied documentation; direct source inspection is pending. Record the actual line numbers and observed code before submission.
+
+#### 9.2 Traceability Auditor
+
+**Prompt:**
+> Trace the requirement “a student can register, log in, create a tutoring request, and log out” through the presentation pages, authentication code, services, repositories, SQLite tables, and automated tests in this project.
+
+**AI response:**
+
+Registration creates an account and links a student profile. Login validates the credentials and active account status, then establishes an authenticated session. Creating a tutoring request requires an authenticated Student and uses the identity linked to that session, rather than trusting a posted student identity. Logout clears the session so that protected pages require authentication again.
+
+| Requirement | Presentation Page | Authentication or Authorization | Service or Validation | Repository or SQL | Database Table | Test Evidence |
+|---|---|---|---|---|---|---|
+| Student registers an account | `php/register.php` → `php/process-register.php` | `includes/auth.php`: CSRF verification; public registration restricted to Student/Tutor | `userService.php`: `registerUser()`; `validation.php`: name, email, password, confirmation and role rules | `userPDO.php`: `insertUser()`; `studentPDO.php`: `insertStudentForUser()` / `linkStudentToUser()` | `users`, `students` | `tests/user-management-tests.php` (UM-01); `tests/validation-tests.php` (relevant validation coverage to confirm) |
+| Student logs in | `php/login.php` → `php/process-login.php` | `auth.php`: `loginUser()`, session ID regeneration, CSRF | `userService.php`: `authenticateUser()`, password verification and Active status check | `userPDO.php`: `findUserByEmail()` | `users` | `tests/user-management-tests.php` (UM-09) |
+| Student creates a tutoring request | `php/request-form.php` → `php/process-request.php` (handler to confirm) | `auth.php`: login, Student role and CSRF checks | `requestService.php`: `submitRequestForUser()`; request validation | `requestPDO.php`: request insertion via PDO; student identity resolved through linked profile (exact methods to confirm) | `students`, `tutoring_requests`; `users` for account identity | `tests/integration-tests.php` (request creation coverage to confirm) |
+| User logs out | Navigation → `php/logout.php` (POST) | `auth.php`: CSRF verification, `logoutUser()`; `requireLogin()` denies subsequent protected access | Session cleanup in `logoutUser()`; no separate business service required | No SQL write required for session destruction | None for logout itself | `tests/user-management-tests.php` (UM-10 is listed in notes; actual session/redirect assertions to confirm) |
+
+**Evaluation:** The trace is consistent with the documented three-tier architecture and the UM-01, UM-09 and UM-10 mappings. The request workflow also follows the documented ownership rule. The table identifies candidate test evidence, not verified passing tests. To confirm the exact handlers, repository methods and assertions, inspect the source and run:
+
+```bash
+grep -nE 'registerUser|authenticateUser|submitRequestForUser|logoutUser|UM-01|UM-09|UM-10' php/*.php includes/auth.php services/*.php tests/*.php
+grep -nE 'function |INSERT INTO' repositories/requestPDO.php
+php tests/validation-tests.php
+php tests/user-management-tests.php
+php tests/integration-tests.php
+```
+
+Record the matching test names, line numbers and actual PASS/FAIL results in the table after checking the project.
+
+#### 9.3 Test Harness Generator
+
+**Prompt:**
+> Suggest one useful test case for authentication or authorization in the Peer Tutoring Hub application. The test must relate to registration, login, logout, session protection, role based access, password validation, CSRF protection, or account status.
+
+**AI response — Test case: Protected page access after logout**
+
+- **Objective:** ensure a previously authenticated student cannot access protected tutoring requests after logging out.
+- **Preconditions:** an Active Student account and a running application with a valid authenticated session.
+- **Steps:** log in as the student; open `php/requests.php`; log out using the normal navigation control; enter the protected URL directly in the same browser.
+- **Expected result:** logout clears the authenticated session and cookie. The protected URL redirects to `login.php` and displays “Please log in to continue.” No private request data is returned.
+- **Pass criterion:** protected content is inaccessible until the student authenticates again.
+
+**Evaluation:**
+
+1. **Existing coverage:** the notes associate UM-10 with user-management tests, but they do not establish whether the complete browser-level logout and subsequent protected-page redirect are tested. Inspect the tests with `grep -niE 'logout|session|requireLogin|redirect' tests/*.php` before deciding whether this is new coverage.
+2. **Manual or automated implementation:** perform the steps above using a test student account. In an HTTP integration test, retain the session cookie across login and logout, submit logout with a valid CSRF token, then request the protected page without following redirects. Assert that the response redirects to login and does not contain private request data. Use a test database, not production data.
+3. **Appropriateness:** this test is appropriate because tutoring requests are protected and the documented logout behavior requires session invalidation. It checks actual authorization after logout, rather than merely checking that a logout button is displayed.
+
+**Execution status:** proposed test; not executed in this review. Record the observed result after running it in Codespaces.
+
+#### 9.4 Skills Pack Reflection
+
+The AI tool helped me understand how registration, authentication and database access are separated in the Peer Tutoring Hub. It also helped me trace the student workflow across the presentation, service and repository layers and identify a useful session-protection test. The exercise showed me why an AI-generated explanation should be compared with the actual PHP code, SQL schema and assignment requirements. Developers must also execute the tests and inspect their results because a plausible explanation does not prove that an application behaves correctly.
 
 ### Part 10: LEFT JOIN query
 ```sql
